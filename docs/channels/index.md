@@ -15,7 +15,9 @@ Text is supported everywhere; media and reactions vary by channel.
 
 - [BlueBubbles](/channels/bluebubbles) — **Recommended for iMessage**; uses the BlueBubbles macOS server REST API with full feature support (edit, unsend, effects, reactions, group management — edit currently broken on macOS 26 Tahoe).
 - [Discord](/channels/discord) — Discord Bot API + Gateway; supports servers, channels, and DMs.
-- [Feishu](/channels/feishu) — Feishu/Lark bot via WebSocket (plugin, installed separately).
+- [IRC](/channels/irc) — Classic IRC servers; channels + DMs with pairing/allowlist controls.
+- [Keybase](/channels/keybase) — End-to-end encrypted DMs and team channels via paper key (plugin, installed separately).
+- [Slack](/channels/slack) — Bolt SDK; workspace apps.- [Feishu](/channels/feishu) — Feishu/Lark bot via WebSocket (plugin, installed separately).
 - [Google Chat](/channels/googlechat) — Google Chat API app via HTTP webhook.
 - [iMessage (legacy)](/channels/imessage) — Legacy macOS integration via imsg CLI (deprecated, use BlueBubbles for new setups).
 - [IRC](/channels/irc) — Classic IRC servers; channels + DMs with pairing/allowlist controls.
