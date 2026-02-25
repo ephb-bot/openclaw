@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   GROUP_POLICY_BLOCKED_LABEL,
@@ -17,12 +17,34 @@ import { sendMessageKeybase } from "./send.js";
 import type { CoreConfig, KeybaseInboundMessage, ResolvedKeybaseAccount } from "./types.js";
 
 const BRAINDUMP_DIR = join(process.env["HOME"] ?? "/root", ".openclaw", "workspace", "braindump");
+const BRAINDUMP_INDEX = join(BRAINDUMP_DIR, ".index.json");
 const BRAINDUMP_TEAM = "coexistence";
 const BRAINDUMP_CHANNEL = "braindump";
 const BRAINDUMP_SENDER = "bontemps";
 
 /**
+ * Read the braindump index file, returning a parsed object.
+ * Returns an empty object if the file doesn't exist or is malformed.
+ */
+async function readBraindumpIndex(): Promise<Record<string, string>> {
+  try {
+    const raw = await readFile(BRAINDUMP_INDEX, "utf8");
+    return JSON.parse(raw) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Write the braindump index file atomically (best-effort).
+ */
+async function writeBraindumpIndex(index: Record<string, string>): Promise<void> {
+  await writeFile(BRAINDUMP_INDEX, JSON.stringify(index, null, 2), "utf8");
+}
+
+/**
  * Immediately write a braindump message to a file in the workspace braindump directory.
+ * Also records a messageId → filename entry in the index for later deletion.
  * This runs before any agent processing to ensure reliable capture.
  */
 async function captureBraindump(
@@ -69,9 +91,56 @@ async function captureBraindump(
     await mkdir(BRAINDUMP_DIR, { recursive: true });
     await writeFile(join(BRAINDUMP_DIR, filename), content, "utf8");
     log?.(`keybase: braindump captured → ${filename}`);
+
+    // Update the index: messageId → filename (read-modify-write).
+    try {
+      const index = await readBraindumpIndex();
+      index[message.messageId] = filename;
+      await writeBraindumpIndex(index);
+    } catch (indexErr) {
+      log?.(`keybase: braindump index update failed: ${String(indexErr)}`);
+    }
   } catch (err) {
     // Log but never throw — capture failure must not block agent processing.
     log?.(`keybase: braindump capture failed: ${String(err)}`);
+  }
+}
+
+/**
+ * Delete a braindump file by message ID, using the index to locate it.
+ * Removes the index entry afterwards. Never throws.
+ */
+export async function deleteBraindump(
+  messageId: number | string,
+  log?: (msg: string) => void,
+): Promise<void> {
+  try {
+    const key = String(messageId);
+    const index = await readBraindumpIndex();
+    const filename = index[key];
+    if (!filename) {
+      log?.(`keybase: braindump delete: no index entry for message ${key}`);
+      return;
+    }
+
+    // Delete the file (ignore if already gone).
+    try {
+      await rm(join(BRAINDUMP_DIR, filename), { force: true });
+      log?.(`keybase: braindump deleted → ${filename}`);
+    } catch (rmErr) {
+      log?.(`keybase: braindump file delete failed for ${filename}: ${String(rmErr)}`);
+    }
+
+    // Remove the index entry regardless of whether the file existed.
+    try {
+      delete index[key];
+      await writeBraindumpIndex(index);
+    } catch (indexErr) {
+      log?.(`keybase: braindump index cleanup failed: ${String(indexErr)}`);
+    }
+  } catch (err) {
+    // Never throw from deleteBraindump.
+    log?.(`keybase: deleteBraindump error: ${String(err)}`);
   }
 }
 
