@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   GROUP_POLICY_BLOCKED_LABEL,
   createReplyPrefixOptions,
@@ -13,6 +15,77 @@ import { normalizeKeybaseAllowEntry } from "./normalize.js";
 import { getKeybaseRuntime } from "./runtime.js";
 import { sendMessageKeybase } from "./send.js";
 import type { CoreConfig, KeybaseInboundMessage, ResolvedKeybaseAccount } from "./types.js";
+
+const BRAINDUMP_DIR = join(process.env["HOME"] ?? "/root", ".openclaw", "workspace", "braindump");
+const BRAINDUMP_TEAM = "coexistence";
+const BRAINDUMP_CHANNEL = "braindump";
+const BRAINDUMP_SENDER = "bontemps";
+
+/**
+ * Immediately write a braindump message to a file in the workspace braindump directory.
+ * This runs before any agent processing to ensure reliable capture.
+ */
+async function captureBraindump(
+  message: KeybaseInboundMessage,
+  log?: (msg: string) => void,
+): Promise<void> {
+  try {
+    const now = new Date(message.timestamp);
+    // Format in Europe/Berlin timezone.
+    const tzFormatter = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Berlin",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const parts = tzFormatter.formatToParts(now);
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    const year = get("year");
+    const month = get("month");
+    const day = get("day");
+    const hour = get("hour");
+    const minute = get("minute");
+
+    const text = message.text?.trim() ?? "";
+
+    // Build slug from first ~5 words.
+    const words = text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 5);
+    const slug = words.join("-") || "note";
+
+    const filename = `${year}-${month}-${day}-${hour}-${minute}-${slug}.md`;
+    const title = words.join(" ");
+    const dateStr = `${year}-${month}-${day} ${hour}:${minute}`;
+
+    const content = `# ${title}\n\nDate: ${dateStr}\n\n${text}\n`;
+
+    await mkdir(BRAINDUMP_DIR, { recursive: true });
+    await writeFile(join(BRAINDUMP_DIR, filename), content, "utf8");
+    log?.(`keybase: braindump captured → ${filename}`);
+  } catch (err) {
+    // Log but never throw — capture failure must not block agent processing.
+    log?.(`keybase: braindump capture failed: ${String(err)}`);
+  }
+}
+
+/**
+ * Returns true when the message is a braindump from bontemps in team:coexistence#braindump.
+ */
+function isBraindumpMessage(message: KeybaseInboundMessage): boolean {
+  if (message.senderUsername.toLowerCase() !== BRAINDUMP_SENDER) {
+    return false;
+  }
+  // target is "team:coexistence#braindump"
+  const target = message.target.toLowerCase();
+  return target === `team:${BRAINDUMP_TEAM}#${BRAINDUMP_CHANNEL}`;
+}
 
 const CHANNEL_ID = "keybase" as const;
 
@@ -216,6 +289,11 @@ export async function handleKeybaseInbound(params: {
       runtime.log?.(`keybase: drop group ${message.target} (no mention)`);
       return;
     }
+  }
+
+  // Braindump capture: write to file before any agent processing.
+  if (isBraindumpMessage(message)) {
+    await captureBraindump(message, runtime.log);
   }
 
   const peerId = message.isGroup ? message.target : message.senderUsername;
