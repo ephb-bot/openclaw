@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { RuntimeEnv } from "openclaw/plugin-sdk";
 import { resolveKeybaseAccount } from "./accounts.js";
 import { clearLiveBot, deinitKeybaseBot, initKeybaseBot, setLiveBot } from "./bot-client.js";
-import { handleKeybaseInbound } from "./inbound.js";
+import { deleteBraindump, handleKeybaseInbound } from "./inbound.js";
 import { isKeybaseTeamTarget } from "./normalize.js";
 import { getKeybaseRuntime } from "./runtime.js";
 import type { CoreConfig, KeybaseAttachment, KeybaseInboundMessage } from "./types.js";
@@ -108,6 +108,22 @@ export async function monitorKeybaseProvider(
 
       const isText = content.type === "text" && Boolean(content.text?.body?.trim());
       const isAttachment = content.type === "attachment";
+      const isDelete = content.type === "delete";
+
+      // Handle delete events for the braindump channel.
+      if (isDelete) {
+        const channelName = msg.channel.name ?? "";
+        const topicName = msg.channel.topicName ?? "";
+        const isBraindumpChannel = channelName === "coexistence" && topicName === "braindump";
+        if (isBraindumpChannel) {
+          const messageIDs: number[] =
+            (content as { delete?: { messageIDs?: number[] } }).delete?.messageIDs ?? [];
+          for (const id of messageIDs) {
+            await deleteBraindump(id, (m) => logger.info(m));
+          }
+        }
+        return;
+      }
 
       // Skip messages that are neither text nor attachment.
       if (!isText && !isAttachment) {
