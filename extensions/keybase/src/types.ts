@@ -41,6 +41,10 @@ export type KeybaseAccountConfig = {
   injectReplyContext?: boolean;
   /** When true, re-dispatch edited messages to the agent (default: false). */
   handleEdits?: boolean;
+  /** Maximum characters per outbound message chunk (default: 10000). */
+  textChunkLimit?: number;
+  /** Chunking strategy: "length" (default) splits at char limit, "newline" splits at paragraph boundaries. */
+  chunkMode?: "length" | "newline";
 };
 
 export type KeybaseConfig = KeybaseAccountConfig & {
