@@ -37,6 +37,8 @@ export type KeybaseAccountConfig = {
   typingIndicator?: boolean;
   /** When true (default), convert standard Markdown to Keybase formatting dialect before sending. */
   markdownFormatting?: boolean;
+  /** When true (default), inject quoted message context when a message is a reply. */
+  injectReplyContext?: boolean;
 };
 
 export type KeybaseConfig = KeybaseAccountConfig & {
@@ -90,6 +92,8 @@ export type KeybaseInboundMessage = {
   };
   /** Downloaded attachments (images, files) included in this message. */
   attachments?: KeybaseAttachment[];
+  /** Message ID this is a reply to, if any. */
+  replyToMsgId?: number;
 };
 
 export type KeybaseProbe = BaseProbeResult<string> & {
