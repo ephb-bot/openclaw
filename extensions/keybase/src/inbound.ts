@@ -180,7 +180,7 @@ function allowlistMatch(allowFrom: string[], sender: string): boolean {
   return allowFrom.some((entry) => entry === lower || lower.endsWith(`@${entry}`));
 }
 
-const DEFAULT_CHUNK_LIMIT = 4000;
+const DEFAULT_CHUNK_LIMIT = 10_000;
 
 async function deliverKeybaseReply(params: {
   payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string };
@@ -632,8 +632,8 @@ export async function handleKeybaseInbound(params: {
             target: peerId,
             accountId: account.accountId,
             markdownFormatting: account.config.markdownFormatting,
-            textChunkLimit: account.config.textChunkLimit,
-            chunkMode: account.config.chunkMode,
+            textChunkLimit: teamConfig?.textChunkLimit ?? account.config.textChunkLimit,
+            chunkMode: teamConfig?.chunkMode ?? account.config.chunkMode,
           });
         },
         onError: (err, info) => {
