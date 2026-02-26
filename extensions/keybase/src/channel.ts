@@ -17,6 +17,7 @@ import {
   resolveKeybaseAccount,
 } from "./accounts.js";
 import { KeybaseConfigSchema } from "./config-schema.js";
+import { markdownToKeybase } from "./format.js";
 import { monitorKeybaseProvider } from "./monitor.js";
 import {
   looksLikeKeybaseTargetId,
@@ -213,7 +214,8 @@ export const keybasePlugin: ChannelPlugin<ResolvedKeybaseAccount, KeybaseProbe> 
   outbound: {
     deliveryMode: "direct",
     sendText: async ({ to, text, accountId }) => {
-      const result = await sendMessageKeybase(to, text, {
+      const formatted = markdownToKeybase(text);
+      const result = await sendMessageKeybase(to, formatted, {
         accountId: accountId ?? undefined,
       });
       return { channel: "keybase", ...result };
@@ -222,7 +224,9 @@ export const keybasePlugin: ChannelPlugin<ResolvedKeybaseAccount, KeybaseProbe> 
       // If mediaUrl looks like a local file path, send it as an attachment.
       if (mediaUrl && (mediaUrl.startsWith("/") || mediaUrl.startsWith("./"))) {
         if (text?.trim()) {
-          await sendMessageKeybase(to, text.trim(), { accountId: accountId ?? undefined });
+          await sendMessageKeybase(to, markdownToKeybase(text.trim()), {
+            accountId: accountId ?? undefined,
+          });
         }
         const result = await attachFileKeybase(to, mediaUrl, {
           accountId: accountId ?? undefined,
@@ -230,7 +234,9 @@ export const keybasePlugin: ChannelPlugin<ResolvedKeybaseAccount, KeybaseProbe> 
         });
         return { channel: "keybase", ...result };
       }
-      const combined = mediaUrl ? `${text}\n\nAttachment: ${mediaUrl}` : text;
+      const combined = mediaUrl
+        ? `${markdownToKeybase(text ?? "")}\n\nAttachment: ${mediaUrl}`
+        : markdownToKeybase(text ?? "");
       const result = await sendMessageKeybase(to, combined, {
         accountId: accountId ?? undefined,
       });
