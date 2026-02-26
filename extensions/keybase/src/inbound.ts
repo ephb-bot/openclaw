@@ -438,6 +438,28 @@ export async function handleKeybaseInbound(params: {
     }
   }
 
+  // Fetch reply context if this message is a reply to another message.
+  let replyContextPrefix = "";
+  const injectReplyContext = account.config.injectReplyContext !== false; // default: true
+  if (injectReplyContext && message.replyToMsgId) {
+    const liveBot = getLiveBot(account.accountId);
+    if (liveBot) {
+      try {
+        const readResult = await liveBot.chat.read(message.rawChannel, {
+          pagination: { num: 50 },
+        });
+        const quotedMsg = readResult.messages.find((m) => Number(m.id) === message.replyToMsgId);
+        if (quotedMsg?.content?.type === "text" && quotedMsg.content.text?.body) {
+          const quotedSender = quotedMsg.sender?.username ?? "unknown";
+          const quotedText = quotedMsg.content.text.body.trim();
+          replyContextPrefix = `[Replying to ${quotedSender}]: "${quotedText}"\n\n`;
+        }
+      } catch {
+        // Non-fatal — continue without reply context if fetch fails.
+      }
+    }
+  }
+
   const body =
     historyPrefix +
     core.channel.reply.formatAgentEnvelope({
@@ -446,7 +468,7 @@ export async function handleKeybaseInbound(params: {
       timestamp: message.timestamp,
       previousTimestamp,
       envelope: envelopeOptions,
-      body: effectiveBodyText,
+      body: replyContextPrefix + effectiveBodyText,
     });
 
   const groupSystemPrompt = teamConfig?.systemPrompt?.trim() || undefined;
