@@ -228,6 +228,10 @@ export async function monitorKeybaseProvider(
         return;
       }
 
+      // Capture reply-to message ID if this is a reply.
+      const replyToMsgId: number | undefined =
+        isText && content.text?.replyTo != null ? Number(content.text.replyTo) : undefined;
+
       const message: KeybaseInboundMessage = {
         messageId: String(msg.id),
         target,
@@ -238,6 +242,7 @@ export async function monitorKeybaseProvider(
         isTeamChannel,
         rawChannel,
         attachments,
+        replyToMsgId: replyToMsgId && !isNaN(replyToMsgId) ? replyToMsgId : undefined,
       };
 
       core.channel.activity.record({
