@@ -5,6 +5,10 @@ export type KeybaseTeamChannelConfig = {
   enabled?: boolean;
   allowFrom?: Array<string | number>;
   systemPrompt?: string;
+  ackReaction?: string | false;
+  doneReaction?: string | false;
+  errorReaction?: string | false;
+  typingIndicator?: boolean;
 };
 
 export type KeybaseAccountConfig = {
@@ -27,6 +31,12 @@ export type KeybaseAccountConfig = {
   historyLimit?: number;
   dmHistoryLimit?: number;
   mediaMaxMb?: number;
+  ackReaction?: string | false;
+  doneReaction?: string | false;
+  errorReaction?: string | false;
+  typingIndicator?: boolean;
+  /** When true (default), convert standard Markdown to Keybase formatting dialect before sending. */
+  markdownFormatting?: boolean;
 };
 
 export type KeybaseConfig = KeybaseAccountConfig & {
