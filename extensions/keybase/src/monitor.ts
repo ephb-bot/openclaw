@@ -257,6 +257,7 @@ export async function monitorKeybaseProvider(
         isGroup,
         isTeamChannel,
         rawChannel,
+        convId: msg.conversationId ?? undefined,
         attachments,
         replyToMsgId: replyToMsgId && !isNaN(replyToMsgId) ? replyToMsgId : undefined,
         isEdit: isEdit || undefined,

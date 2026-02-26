@@ -12,6 +12,8 @@ export type SendKeybaseResult = {
 
 type SendKeybaseOptions = {
   accountId?: string;
+  /** Exploding message lifetime in seconds. null/undefined = normal (non-exploding) message. */
+  explodingLifetimeSec?: number | null;
 };
 
 /**
@@ -129,7 +131,11 @@ export async function sendMessageKeybase(
 
   let msgId = 0;
   try {
-    const result = await bot.chat.send(channel, { body: payload });
+    const sendOpts: { body: string; explodingLifetime?: number } = { body: payload };
+    if (opts.explodingLifetimeSec != null && opts.explodingLifetimeSec > 0) {
+      sendOpts.explodingLifetime = opts.explodingLifetimeSec;
+    }
+    const result = await bot.chat.send(channel, sendOpts);
     msgId = result.id ?? 0;
   } finally {
     if (transient) {
