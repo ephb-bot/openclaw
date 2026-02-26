@@ -1,8 +1,4 @@
-import {
-  DmPolicySchema,
-  GroupPolicySchema,
-  requireOpenAllowFrom,
-} from "openclaw/plugin-sdk";
+import { DmPolicySchema, GroupPolicySchema, requireOpenAllowFrom } from "openclaw/plugin-sdk";
 import { z } from "zod";
 
 const KeybaseTeamChannelSchema = z
@@ -11,6 +7,10 @@ const KeybaseTeamChannelSchema = z
     enabled: z.boolean().optional(),
     allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
     systemPrompt: z.string().optional(),
+    ackReaction: z.union([z.string(), z.literal(false)]).optional(),
+    doneReaction: z.union([z.string(), z.literal(false)]).optional(),
+    errorReaction: z.union([z.string(), z.literal(false)]).optional(),
+    typingIndicator: z.boolean().optional(),
   })
   .strict();
 
@@ -30,6 +30,11 @@ export const KeybaseAccountSchemaBase = z
     historyLimit: z.number().int().min(0).optional(),
     dmHistoryLimit: z.number().int().min(0).optional(),
     mediaMaxMb: z.number().positive().optional(),
+    ackReaction: z.union([z.string(), z.literal(false)]).optional(),
+    doneReaction: z.union([z.string(), z.literal(false)]).optional(),
+    errorReaction: z.union([z.string(), z.literal(false)]).optional(),
+    typingIndicator: z.boolean().optional(),
+    markdownFormatting: z.boolean().optional(),
   })
   .strict();
 
