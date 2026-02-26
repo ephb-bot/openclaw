@@ -39,6 +39,8 @@ export type KeybaseAccountConfig = {
   markdownFormatting?: boolean;
   /** When true (default), inject quoted message context when a message is a reply. */
   injectReplyContext?: boolean;
+  /** When true, re-dispatch edited messages to the agent (default: false). */
+  handleEdits?: boolean;
 };
 
 export type KeybaseConfig = KeybaseAccountConfig & {
@@ -94,6 +96,10 @@ export type KeybaseInboundMessage = {
   attachments?: KeybaseAttachment[];
   /** Message ID this is a reply to, if any. */
   replyToMsgId?: number;
+  /** True when this message is an edit of a previously sent message. */
+  isEdit?: boolean;
+  /** The original message ID being edited (if isEdit is true). */
+  editedMsgId?: number;
 };
 
 export type KeybaseProbe = BaseProbeResult<string> & {
