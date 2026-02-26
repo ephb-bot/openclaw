@@ -226,6 +226,11 @@ export async function handleKeybaseInbound(params: {
     return;
   }
 
+  // Skip edited messages unless handleEdits is explicitly enabled (default: false).
+  if (message.isEdit && !account.config.handleEdits) {
+    return;
+  }
+
   const dmPolicy = account.config.dmPolicy ?? "pairing";
   const defaultGroupPolicy = resolveDefaultGroupPolicy(config);
   const { groupPolicy, providerMissingFallbackApplied } =
@@ -438,6 +443,11 @@ export async function handleKeybaseInbound(params: {
     }
   }
 
+  // Annotate edit messages with a prefix so the agent knows the original was corrected.
+  const editPrefix = message.isEdit
+    ? `[Edit of message #${message.editedMsgId ?? "unknown"}]: `
+    : "";
+
   // Fetch reply context if this message is a reply to another message.
   let replyContextPrefix = "";
   const injectReplyContext = account.config.injectReplyContext !== false; // default: true
@@ -468,7 +478,7 @@ export async function handleKeybaseInbound(params: {
       timestamp: message.timestamp,
       previousTimestamp,
       envelope: envelopeOptions,
-      body: replyContextPrefix + effectiveBodyText,
+      body: editPrefix + replyContextPrefix + effectiveBodyText,
     });
 
   const groupSystemPrompt = teamConfig?.systemPrompt?.trim() || undefined;
