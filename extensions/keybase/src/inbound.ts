@@ -11,10 +11,14 @@ import {
   type OpenClawConfig,
   type RuntimeEnv,
 } from "openclaw/plugin-sdk";
+import { getLiveBot } from "./bot-client.js";
+import { markdownToKeybase } from "./format.js";
+import { fetchKeybaseHistory } from "./history.js";
 import { normalizeKeybaseAllowEntry } from "./normalize.js";
 import { getKeybaseRuntime } from "./runtime.js";
 import { sendMessageKeybase } from "./send.js";
 import type { CoreConfig, KeybaseInboundMessage, ResolvedKeybaseAccount } from "./types.js";
+import { startTypingKeepAlive } from "./typing.js";
 
 const BRAINDUMP_DIR = join(process.env["HOME"] ?? "/root", ".openclaw", "workspace", "braindump");
 const BRAINDUMP_INDEX = join(BRAINDUMP_DIR, ".index.json");
@@ -177,6 +181,8 @@ async function deliverKeybaseReply(params: {
   payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string };
   target: string;
   accountId: string;
+  /** When true (default), convert standard Markdown to Keybase formatting dialect. */
+  markdownFormatting?: boolean;
 }): Promise<void> {
   const text = params.payload.text ?? "";
   const mediaList = params.payload.mediaUrls?.length
@@ -196,7 +202,11 @@ async function deliverKeybaseReply(params: {
       : text.trim()
     : mediaBlock;
 
-  await sendMessageKeybase(params.target, combined, { accountId: params.accountId });
+  // Apply Keybase Markdown formatter unless explicitly disabled (default: enabled).
+  const formattingEnabled = params.markdownFormatting !== false;
+  const processedText = formattingEnabled ? markdownToKeybase(combined) : combined;
+
+  await sendMessageKeybase(params.target, processedText, { accountId: params.accountId });
 }
 
 export async function handleKeybaseInbound(params: {
@@ -394,14 +404,49 @@ export async function handleKeybaseInbound(params: {
       : "<media:image>";
   const effectiveBodyText = rawBody || (hasAttachments ? mediaPlaceholder : "");
 
-  const body = core.channel.reply.formatAgentEnvelope({
-    channel: "Keybase",
-    from: fromLabel,
-    timestamp: message.timestamp,
-    previousTimestamp,
-    envelope: envelopeOptions,
-    body: effectiveBodyText,
-  });
+  // Fetch channel history and prepend it to provide context to the agent.
+  const historyLimit = message.isGroup
+    ? (account.config.historyLimit ?? 20)
+    : (account.config.dmHistoryLimit ?? account.config.historyLimit ?? 0);
+
+  let historyPrefix = "";
+  if (historyLimit > 0) {
+    const liveBot = getLiveBot(account.accountId);
+    if (liveBot) {
+      const history = await fetchKeybaseHistory({
+        bot: liveBot,
+        channel: message.rawChannel,
+        limit: historyLimit,
+      });
+      // Exclude the current message (it'll be the last entry in the fetched history).
+      const priorHistory = history.filter((h) => h.messageId !== message.messageId);
+      if (priorHistory.length > 0) {
+        historyPrefix =
+          priorHistory
+            .map((h) =>
+              core.channel.reply.formatAgentEnvelope({
+                channel: "Keybase",
+                from: message.isGroup ? `${message.target}/${h.senderUsername}` : h.senderUsername,
+                timestamp: h.timestamp,
+                envelope: envelopeOptions,
+                body: h.text,
+              }),
+            )
+            .join("\n") + "\n";
+      }
+    }
+  }
+
+  const body =
+    historyPrefix +
+    core.channel.reply.formatAgentEnvelope({
+      channel: "Keybase",
+      from: fromLabel,
+      timestamp: message.timestamp,
+      previousTimestamp,
+      envelope: envelopeOptions,
+      body: effectiveBodyText,
+    });
 
   const groupSystemPrompt = teamConfig?.systemPrompt?.trim() || undefined;
 
@@ -458,25 +503,86 @@ export async function handleKeybaseInbound(params: {
     accountId: account.accountId,
   });
 
-  await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-    ctx: ctxPayload,
-    cfg: config as OpenClawConfig,
-    dispatcherOptions: {
-      ...prefixOptions,
-      deliver: async (payload) => {
-        await deliverKeybaseReply({
-          payload: payload as { text?: string; mediaUrls?: string[]; mediaUrl?: string },
-          target: peerId,
-          accountId: account.accountId,
-        });
+  // Resolve reaction emojis: per-team > per-account > defaults.
+  const ackEmoji: string | false =
+    teamConfig?.ackReaction !== undefined
+      ? teamConfig.ackReaction
+      : (account.config.ackReaction ?? "👀");
+  const doneEmoji: string | false =
+    teamConfig?.doneReaction !== undefined
+      ? teamConfig.doneReaction
+      : (account.config.doneReaction ?? false);
+  const errorEmoji: string | false =
+    teamConfig?.errorReaction !== undefined
+      ? teamConfig.errorReaction
+      : (account.config.errorReaction ?? "❌");
+
+  const liveBot = getLiveBot(account.accountId);
+  const msgId = Number(message.messageId);
+
+  // Send ack reaction immediately after all policy gates pass.
+  if (liveBot && ackEmoji && msgId) {
+    liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
+  }
+
+  // Typing indicator: show while the agent is working, renew every 4 s.
+  const typingEnabled = account.config.typingIndicator ?? true;
+  const teamTypingEnabled = teamConfig?.typingIndicator ?? typingEnabled;
+  let typingHandle: { stop: () => void } | null = null;
+  if (teamTypingEnabled && liveBot) {
+    typingHandle = startTypingKeepAlive(liveBot, message.rawChannel);
+  }
+
+  let dispatchError = false;
+  try {
+    await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx: ctxPayload,
+      cfg: config as OpenClawConfig,
+      dispatcherOptions: {
+        ...prefixOptions,
+        deliver: async (payload) => {
+          await deliverKeybaseReply({
+            payload: payload as { text?: string; mediaUrls?: string[]; mediaUrl?: string },
+            target: peerId,
+            accountId: account.accountId,
+          });
+        },
+        onError: (err, info) => {
+          runtime.error?.(`keybase ${info.kind} reply failed: ${String(err)}`);
+        },
       },
-      onError: (err, info) => {
-        runtime.error?.(`keybase ${info.kind} reply failed: ${String(err)}`);
+      replyOptions: {
+        skillFilter: teamConfig?.systemPrompt ? undefined : undefined,
+        onModelSelected,
       },
-    },
-    replyOptions: {
-      skillFilter: teamConfig?.systemPrompt ? undefined : undefined,
-      onModelSelected,
-    },
-  });
+    });
+  } catch (err) {
+    dispatchError = true;
+    throw err;
+  } finally {
+    // Clear typing indicator (stop renewal + send typing=false).
+    typingHandle?.stop();
+
+    if (liveBot && msgId) {
+      if (dispatchError) {
+        if (errorEmoji) {
+          // Toggle off ack, then apply error emoji.
+          if (ackEmoji) liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
+          liveBot.chat.react(message.rawChannel, msgId, errorEmoji).catch(() => {});
+        } else if (ackEmoji) {
+          // No error emoji configured — just remove the ack.
+          liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
+        }
+      } else {
+        if (doneEmoji) {
+          // Toggle off ack, then apply done emoji.
+          if (ackEmoji) liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
+          liveBot.chat.react(message.rawChannel, msgId, doneEmoji).catch(() => {});
+        } else if (ackEmoji) {
+          // No done emoji — remove ack by toggling it off.
+          liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
+        }
+      }
+    }
+  }
 }
