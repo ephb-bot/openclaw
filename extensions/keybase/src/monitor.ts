@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { RuntimeEnv } from "openclaw/plugin-sdk";
 import { resolveKeybaseAccount } from "./accounts.js";
 import { clearLiveBot, deinitKeybaseBot, initKeybaseBot, setLiveBot } from "./bot-client.js";
+import { advertiseKeybaseCommands } from "./commands.js";
 import { deleteBraindump, handleKeybaseInbound } from "./inbound.js";
 import { isKeybaseTeamTarget } from "./normalize.js";
 import { getKeybaseRuntime } from "./runtime.js";
@@ -73,6 +74,13 @@ export async function monitorKeybaseProvider(
   setLiveBot(account.accountId, bot);
 
   logger.info(`[${account.accountId}] Keybase bot ready, listening for messages`);
+
+  // Advertise slash commands so Keybase shows autocomplete.
+  advertiseKeybaseCommands(bot).catch((err) => {
+    logger.warn(
+      `[${account.accountId}] Failed to advertise commands: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
 
   // abortSignal integration: resolve a promise when aborted so we can race it.
   let resolveAbort: () => void = () => {};
