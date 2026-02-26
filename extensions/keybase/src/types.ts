@@ -13,6 +13,8 @@ export type KeybaseTeamChannelConfig = {
   textChunkLimit?: number;
   /** Per-channel chunking strategy (overrides account-level chunkMode). */
   chunkMode?: "length" | "newline";
+  /** Per-channel exploding message lifetime in seconds (overrides account-level). */
+  explodingLifetimeSec?: number | null;
 };
 
 export type KeybaseAccountConfig = {
@@ -49,6 +51,8 @@ export type KeybaseAccountConfig = {
   textChunkLimit?: number;
   /** Chunking strategy: "length" (default) splits at char limit, "newline" splits at paragraph boundaries. */
   chunkMode?: "length" | "newline";
+  /** Exploding message lifetime in seconds. null/undefined = disabled (default). */
+  explodingLifetimeSec?: number | null;
 };
 
 export type KeybaseConfig = KeybaseAccountConfig & {
@@ -102,6 +106,8 @@ export type KeybaseInboundMessage = {
   };
   /** Downloaded attachments (images, files) included in this message. */
   attachments?: KeybaseAttachment[];
+  /** Stable conversation ID (ConvIDStr) — preferred over rawChannel for API calls. */
+  convId?: string;
   /** Message ID this is a reply to, if any. */
   replyToMsgId?: number;
   /** True when this message is an edit of a previously sent message. */

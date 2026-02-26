@@ -14,7 +14,8 @@ export type KeybaseHistoryEntry = {
  */
 export async function fetchKeybaseHistory(params: {
   bot: Bot;
-  channel: { name: string; membersType?: string; topicName?: string };
+  /** ChatChannel object or ConvIDStr — ConvIDStr preferred for efficiency. */
+  channel: { name: string; membersType?: string; topicName?: string } | string;
   limit: number;
 }): Promise<KeybaseHistoryEntry[]> {
   const { bot, channel, limit } = params;

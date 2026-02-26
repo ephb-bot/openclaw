@@ -188,10 +188,12 @@ async function deliverKeybaseReply(params: {
   accountId: string;
   /** When true (default), convert standard Markdown to Keybase formatting dialect. */
   markdownFormatting?: boolean;
-  /** Maximum characters per message chunk (default: 4000). */
+  /** Maximum characters per message chunk (default: 10000). */
   textChunkLimit?: number;
   /** Chunking strategy: "length" splits at char limit, "newline" splits at paragraph boundaries. */
   chunkMode?: ChunkMode;
+  /** Exploding message lifetime in seconds. null/undefined = normal message. */
+  explodingLifetimeSec?: number | null;
 }): Promise<void> {
   const text = params.payload.text ?? "";
   const mediaList = params.payload.mediaUrls?.length
@@ -221,7 +223,10 @@ async function deliverKeybaseReply(params: {
     processedText.length <= limit ? [processedText] : chunkTextForOutbound(processedText, limit);
 
   for (const chunk of chunks) {
-    await sendMessageKeybase(params.target, chunk, { accountId: params.accountId });
+    await sendMessageKeybase(params.target, chunk, {
+      accountId: params.accountId,
+      explodingLifetimeSec: params.explodingLifetimeSec ?? undefined,
+    });
   }
 }
 
@@ -233,6 +238,9 @@ export async function handleKeybaseInbound(params: {
 }): Promise<void> {
   const { message, account, config, runtime } = params;
   const core = getKeybaseRuntime();
+
+  // Prefer ConvIDStr over rawChannel for all API calls — it's stable and avoids name lookups.
+  const convTarget = message.convId ?? message.rawChannel;
 
   const rawBody = message.text?.trim() ?? "";
   const hasAttachments = (message.attachments?.length ?? 0) > 0;
@@ -437,7 +445,7 @@ export async function handleKeybaseInbound(params: {
     if (liveBot) {
       const history = await fetchKeybaseHistory({
         bot: liveBot,
-        channel: message.rawChannel,
+        channel: convTarget,
         limit: historyLimit,
       });
       // Exclude the current message (it'll be the last entry in the fetched history).
@@ -471,7 +479,7 @@ export async function handleKeybaseInbound(params: {
     const liveBot = getLiveBot(account.accountId);
     if (liveBot) {
       try {
-        const readResult = await liveBot.chat.read(message.rawChannel, {
+        const readResult = await liveBot.chat.read(convTarget, {
           pagination: { num: 50 },
         });
         const quotedMsg = readResult.messages.find((m) => Number(m.id) === message.replyToMsgId);
@@ -608,7 +616,7 @@ export async function handleKeybaseInbound(params: {
 
   // Send ack reaction immediately after all policy gates pass.
   if (liveBot && ackEmoji && msgId) {
-    liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
+    liveBot.chat.react(convTarget, msgId, ackEmoji).catch(() => {});
   }
 
   // Typing indicator: show while the agent is working, renew every 4 s.
@@ -616,7 +624,10 @@ export async function handleKeybaseInbound(params: {
   const teamTypingEnabled = teamConfig?.typingIndicator ?? typingEnabled;
   let typingHandle: { stop: () => void } | null = null;
   if (teamTypingEnabled && liveBot) {
-    typingHandle = startTypingKeepAlive(liveBot, message.rawChannel);
+    typingHandle = startTypingKeepAlive(
+      liveBot,
+      convTarget as Parameters<typeof startTypingKeepAlive>[1],
+    );
   }
 
   let dispatchError = false;
@@ -634,6 +645,8 @@ export async function handleKeybaseInbound(params: {
             markdownFormatting: account.config.markdownFormatting,
             textChunkLimit: teamConfig?.textChunkLimit ?? account.config.textChunkLimit,
             chunkMode: teamConfig?.chunkMode ?? account.config.chunkMode,
+            explodingLifetimeSec:
+              teamConfig?.explodingLifetimeSec ?? account.config.explodingLifetimeSec,
           });
         },
         onError: (err, info) => {
@@ -656,20 +669,20 @@ export async function handleKeybaseInbound(params: {
       if (dispatchError) {
         if (errorEmoji) {
           // Toggle off ack, then apply error emoji.
-          if (ackEmoji) liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
-          liveBot.chat.react(message.rawChannel, msgId, errorEmoji).catch(() => {});
+          if (ackEmoji) liveBot.chat.react(convTarget, msgId, ackEmoji).catch(() => {});
+          liveBot.chat.react(convTarget, msgId, errorEmoji).catch(() => {});
         } else if (ackEmoji) {
           // No error emoji configured — just remove the ack.
-          liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
+          liveBot.chat.react(convTarget, msgId, ackEmoji).catch(() => {});
         }
       } else {
         if (doneEmoji) {
           // Toggle off ack, then apply done emoji.
-          if (ackEmoji) liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
-          liveBot.chat.react(message.rawChannel, msgId, doneEmoji).catch(() => {});
+          if (ackEmoji) liveBot.chat.react(convTarget, msgId, ackEmoji).catch(() => {});
+          liveBot.chat.react(convTarget, msgId, doneEmoji).catch(() => {});
         } else if (ackEmoji) {
           // No done emoji — remove ack by toggling it off.
-          liveBot.chat.react(message.rawChannel, msgId, ackEmoji).catch(() => {});
+          liveBot.chat.react(convTarget, msgId, ackEmoji).catch(() => {});
         }
       }
     }
