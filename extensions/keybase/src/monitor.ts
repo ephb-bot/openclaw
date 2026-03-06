@@ -314,5 +314,46 @@ export async function monitorKeybaseProvider(
   };
 }
 
+/**
+ * Global registry of active monitor stop functions.
+ * Filled by channel.ts when each provider starts.
+ * Cleared on gateway_stop to force all providers to stop.
+ */
+const activeMonitors = new Map<string, () => void>();
+
+/** Register a monitor's stop function (called by channel.ts). */
+export function registerKeybaseMonitor(accountId: string, stopFn: () => void): void {
+  activeMonitors.set(accountId, stopFn);
+}
+
+/** Unregister a monitor (called after it stops). */
+export function unregisterKeybaseMonitor(accountId: string): void {
+  activeMonitors.delete(accountId);
+}
+
+/** Stop all active Keybase providers. Called on gateway_stop. */
+export async function stopAllKeybaseProviders(): Promise<void> {
+  const logger = getKeybaseRuntime()?.logging?.getChildLogger?.({ channel: "keybase" }) ?? {
+    info: (...args: unknown[]) => console.log("[keybase]", ...args),
+    error: (...args: unknown[]) => console.error("[keybase]", ...args),
+  };
+
+  logger.info(`Stopping all Keybase providers (${activeMonitors.size} active)...`);
+
+  // Call all stop functions concurrently
+  const stopPromises = Array.from(activeMonitors.entries()).map(async ([accountId, stopFn]) => {
+    try {
+      logger.info(`Stopping Keybase provider: ${accountId}`);
+      stopFn();
+      activeMonitors.delete(accountId);
+    } catch (err) {
+      logger.error(`Error stopping Keybase provider ${accountId}:`, err);
+    }
+  });
+
+  await Promise.all(stopPromises);
+  logger.info("All Keybase providers stopped");
+}
+
 // Re-export for tree-shaking friendliness.
 export { isKeybaseTeamTarget };

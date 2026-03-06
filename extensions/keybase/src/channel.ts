@@ -18,7 +18,11 @@ import {
 } from "./accounts.js";
 import { KeybaseConfigSchema } from "./config-schema.js";
 import { markdownToKeybase } from "./format.js";
-import { monitorKeybaseProvider } from "./monitor.js";
+import {
+  monitorKeybaseProvider,
+  registerKeybaseMonitor,
+  unregisterKeybaseMonitor,
+} from "./monitor.js";
 import {
   looksLikeKeybaseTargetId,
   normalizeKeybaseAllowEntry,
@@ -354,7 +358,15 @@ export const keybasePlugin: ChannelPlugin<ResolvedKeybaseAccount, KeybaseProbe> 
         abortSignal: ctx.abortSignal,
         statusSink: (patch) => ctx.setStatus({ accountId: ctx.accountId, ...patch }),
       });
-      return { stop };
+      // Register this monitor so gateway_stop can stop all providers
+      registerKeybaseMonitor(account.accountId, stop);
+      // Return a wrapped stop that also unregisters
+      return {
+        stop: async () => {
+          stop();
+          unregisterKeybaseMonitor(account.accountId);
+        },
+      };
     },
   },
 };
