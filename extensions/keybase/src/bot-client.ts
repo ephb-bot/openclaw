@@ -53,3 +53,10 @@ export async function deinitKeybaseBot(bot: Bot, accountId: string): Promise<voi
     process.stderr.write(`[keybase] deinit error for ${accountId}: ${msg}\n`);
   }
 }
+
+/**
+ * Get all live Bot instances (for cleanup purposes).
+ */
+export function getAllLiveBots(): Map<string, Bot> {
+  return liveBots;
+}
