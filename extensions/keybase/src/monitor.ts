@@ -4,7 +4,13 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RuntimeEnv } from "openclaw/plugin-sdk";
 import { resolveKeybaseAccount } from "./accounts.js";
-import { clearLiveBot, deinitKeybaseBot, initKeybaseBot, setLiveBot } from "./bot-client.js";
+import {
+  clearLiveBot,
+  deinitKeybaseBot,
+  getAllLiveBots,
+  initKeybaseBot,
+  setLiveBot,
+} from "./bot-client.js";
 import { advertiseKeybaseCommands } from "./commands.js";
 import { deleteBraindump, handleKeybaseInbound } from "./inbound.js";
 import { isKeybaseTeamTarget } from "./normalize.js";
@@ -352,6 +358,38 @@ export async function stopAllKeybaseProviders(): Promise<void> {
   });
 
   await Promise.all(stopPromises);
+
+  // Force kill any orphaned Keybase child processes after deinit completes.
+  // The keybase-bot library may not properly clean up all spawned processes
+  // on deinit, especially if the process is in a broken state.
+  const { exec } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execAsync = promisify(exec);
+
+  try {
+    // Find orphaned keybase processes running under jetibot/vrtxbot users
+    const { stdout } = await execAsync(
+      'pgrep -f "keybase.*api-listen|keybase.*service" | xargs -r ps -o pid,ppid,user,cmd --no-headers | grep -E "jetibot|vrtxbot" | awk \'{print $1}\'',
+      { timeout: 10000 },
+    );
+    const orphanedPids = stdout.trim().split("\n").filter(Boolean);
+    if (orphanedPids.length > 0) {
+      logger.info(
+        `Killing ${orphanedPids.length} orphaned Keybase processes: ${orphanedPids.join(", ")}`,
+      );
+      for (const pid of orphanedPids) {
+        try {
+          process.kill(Number(pid), "SIGKILL");
+        } catch (e) {
+          // Process may already be dead
+        }
+      }
+    }
+  } catch (e) {
+    // pgrep may return non-zero if no processes found - that's fine
+    logger.debug(`Orphaned process check: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   logger.info("All Keybase providers stopped");
 }
 
