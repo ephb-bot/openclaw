@@ -10,6 +10,8 @@ import {
   warnMissingProviderGroupPolicyFallbackOnce,
   type OpenClawConfig,
   type RuntimeEnv,
+  chunkTextForOutbound,
+  type ChunkMode,
 } from "openclaw/plugin-sdk";
 import { getLiveBot } from "./bot-client.js";
 import { handleKeybaseCommand, isKeybaseCommand } from "./commands.js";
@@ -178,12 +180,18 @@ function allowlistMatch(allowFrom: string[], sender: string): boolean {
   return allowFrom.some((entry) => entry === lower || lower.endsWith(`@${entry}`));
 }
 
+const DEFAULT_CHUNK_LIMIT = 10_000;
+
 async function deliverKeybaseReply(params: {
   payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string };
   target: string;
   accountId: string;
   /** When true (default), convert standard Markdown to Keybase formatting dialect. */
   markdownFormatting?: boolean;
+  /** Maximum characters per message chunk (default: 4000). */
+  textChunkLimit?: number;
+  /** Chunking strategy: "length" splits at char limit, "newline" splits at paragraph boundaries. */
+  chunkMode?: ChunkMode;
 }): Promise<void> {
   const text = params.payload.text ?? "";
   const mediaList = params.payload.mediaUrls?.length
@@ -207,7 +215,14 @@ async function deliverKeybaseReply(params: {
   const formattingEnabled = params.markdownFormatting !== false;
   const processedText = formattingEnabled ? markdownToKeybase(combined) : combined;
 
-  await sendMessageKeybase(params.target, processedText, { accountId: params.accountId });
+  // Split into chunks if the message exceeds the limit.
+  const limit = params.textChunkLimit ?? DEFAULT_CHUNK_LIMIT;
+  const chunks =
+    processedText.length <= limit ? [processedText] : chunkTextForOutbound(processedText, limit);
+
+  for (const chunk of chunks) {
+    await sendMessageKeybase(params.target, chunk, { accountId: params.accountId });
+  }
 }
 
 export async function handleKeybaseInbound(params: {
@@ -617,6 +632,8 @@ export async function handleKeybaseInbound(params: {
             target: peerId,
             accountId: account.accountId,
             markdownFormatting: account.config.markdownFormatting,
+            textChunkLimit: teamConfig?.textChunkLimit ?? account.config.textChunkLimit,
+            chunkMode: teamConfig?.chunkMode ?? account.config.chunkMode,
           });
         },
         onError: (err, info) => {

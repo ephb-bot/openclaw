@@ -9,6 +9,10 @@ export type KeybaseTeamChannelConfig = {
   doneReaction?: string | false;
   errorReaction?: string | false;
   typingIndicator?: boolean;
+  /** Per-channel max characters per chunk (overrides account-level textChunkLimit). */
+  textChunkLimit?: number;
+  /** Per-channel chunking strategy (overrides account-level chunkMode). */
+  chunkMode?: "length" | "newline";
 };
 
 export type KeybaseAccountConfig = {
@@ -41,6 +45,10 @@ export type KeybaseAccountConfig = {
   injectReplyContext?: boolean;
   /** When true, re-dispatch edited messages to the agent (default: false). */
   handleEdits?: boolean;
+  /** Maximum characters per outbound message chunk (default: 10000). */
+  textChunkLimit?: number;
+  /** Chunking strategy: "length" (default) splits at char limit, "newline" splits at paragraph boundaries. */
+  chunkMode?: "length" | "newline";
 };
 
 export type KeybaseConfig = KeybaseAccountConfig & {
