@@ -7,7 +7,7 @@ import {
   type ChannelOnboardingDmPolicy,
   type DmPolicy,
   type WizardPrompter,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/setup";
 import {
   listKeybaseAccountIds,
   resolveDefaultKeybaseAccountId,
