@@ -308,6 +308,7 @@ export async function handleKeybaseInbound(params: {
                 payload: { text: reply },
                 target: message.senderUsername,
                 accountId: account.accountId,
+                markdownFormatting: account.config.markdownFormatting,
               });
             } catch (err) {
               runtime.error?.(
@@ -545,6 +546,7 @@ export async function handleKeybaseInbound(params: {
             payload: payload as { text?: string; mediaUrls?: string[]; mediaUrl?: string },
             target: peerId,
             accountId: account.accountId,
+            markdownFormatting: account.config.markdownFormatting,
           });
         },
         onError: (err, info) => {
