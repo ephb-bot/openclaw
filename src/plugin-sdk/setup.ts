@@ -21,7 +21,6 @@ export { formatCliCommand } from "../cli/command-format.js";
 export { detectBinary } from "../plugins/setup-binary.js";
 export { installSignalCli } from "../plugins/signal-cli-install.js";
 export { formatDocsLink } from "../terminal/links.js";
-export { promptAccountId } from "../channels/plugins/setup-wizard-helpers.js";
 export { hasConfiguredSecretInput, normalizeSecretInputString } from "../config/types.secrets.js";
 export { normalizeE164, pathExists } from "../utils.js";
 
@@ -82,6 +81,7 @@ export {
   setTopLevelChannelGroupPolicy,
   splitSetupEntries,
 } from "../channels/plugins/setup-wizard-helpers.js";
+export { promptAccountId } from "../channels/plugins/setup-wizard-helpers.js";
 export { createAllowlistSetupWizardProxy } from "../channels/plugins/setup-wizard-proxy.js";
 export {
   createDelegatedFinalize,
@@ -99,17 +99,7 @@ export {
 export { formatResolvedUnresolvedNote } from "./resolution-notes.js";
 
 // From channels/plugins/helpers
-export { formatPairingApproveHint } from "../channels/plugins/helpers.js";
-export { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
-
-// From channels/plugins/pairing-message
-export { PAIRING_APPROVED_MESSAGE } from "../channels/plugins/pairing-message.js";
-
-// From channels/plugins/config-helpers
-
-// From channels/plugins/helpers
-export { formatPairingApproveHint } from "../channels/plugins/helpers.js";
-export { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
+export { formatPairingApproveHint, resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
 
 // From channels/plugins/pairing-message
 export { PAIRING_APPROVED_MESSAGE } from "../channels/plugins/pairing-message.js";
@@ -133,3 +123,13 @@ export { resolveControlCommandGate } from "../channels/command-gating.js";
 export { createReplyPrefixOptions } from "../channels/reply-prefix.js";
 export { GROUP_POLICY_BLOCKED_LABEL } from "../config/runtime-group-policy.js";
 export { warnMissingProviderGroupPolicyFallbackOnce } from "../config/runtime-group-policy.js";
+
+// From text-chunking
+export { chunkTextForOutbound } from "./text-chunking.js";
+
+// From config/runtime-group-policy
+export {
+  resolveDefaultGroupPolicy,
+  resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveOpenProviderRuntimeGroupPolicy,
+} from "../config/runtime-group-policy.js";
