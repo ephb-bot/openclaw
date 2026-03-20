@@ -97,3 +97,39 @@ export {
 } from "../channels/plugins/setup-wizard-binary.js";
 
 export { formatResolvedUnresolvedNote } from "./resolution-notes.js";
+
+// From channels/plugins/helpers
+export { formatPairingApproveHint } from "../channels/plugins/helpers.js";
+export { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
+
+// From channels/plugins/pairing-message
+export { PAIRING_APPROVED_MESSAGE } from "../channels/plugins/pairing-message.js";
+
+// From channels/plugins/config-helpers
+
+// From channels/plugins/helpers
+export { formatPairingApproveHint } from "../channels/plugins/helpers.js";
+export { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
+
+// From channels/plugins/pairing-message
+export { PAIRING_APPROVED_MESSAGE } from "../channels/plugins/pairing-message.js";
+
+// From channels/plugins/config-helpers
+export {
+  setAccountEnabledInConfigSection,
+  deleteAccountFromConfigSection,
+} from "../channels/plugins/config-helpers.js";
+
+// From config/zod-schema.core
+export {
+  DmPolicySchema,
+  GroupPolicySchema,
+  requireOpenAllowFrom,
+} from "../config/zod-schema.core.js";
+
+// From channels/logging and channels/command-gating and channels/reply-prefix
+export { logInboundDrop } from "../channels/logging.js";
+export { resolveControlCommandGate } from "../channels/command-gating.js";
+export { createReplyPrefixOptions } from "../channels/reply-prefix.js";
+export { GROUP_POLICY_BLOCKED_LABEL } from "../config/runtime-group-policy.js";
+export { warnMissingProviderGroupPolicyFallbackOnce } from "../config/runtime-group-policy.js";
