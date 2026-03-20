@@ -109,6 +109,7 @@ export async function monitorKeybaseProvider(
       const isText = content.type === "text" && Boolean(content.text?.body?.trim());
       const isAttachment = content.type === "attachment";
       const isDelete = content.type === "delete";
+      const isEdit = content.type === "edit" && Boolean(content.edit?.body?.trim());
 
       // Handle delete events for the braindump channel.
       if (isDelete) {
@@ -125,8 +126,8 @@ export async function monitorKeybaseProvider(
         return;
       }
 
-      // Skip messages that are neither text nor attachment.
-      if (!isText && !isAttachment) {
+      // Skip messages that are neither text, attachment, nor edit.
+      if (!isText && !isAttachment && !isEdit) {
         return;
       }
 
@@ -146,10 +147,12 @@ export async function monitorKeybaseProvider(
         senderUsername,
       });
 
-      // Resolve message text (attachment title serves as caption).
+      // Resolve message text (attachment title serves as caption; edits use the new body).
       const text = isText
         ? (content.text?.body?.trim() ?? "")
-        : (content.attachment?.object?.title?.trim() ?? "");
+        : isEdit
+          ? (content.edit?.body?.trim() ?? "")
+          : (content.attachment?.object?.title?.trim() ?? "");
 
       // Download attachments to a temp directory.
       let attachments: KeybaseAttachment[] | undefined;
@@ -232,6 +235,11 @@ export async function monitorKeybaseProvider(
       const replyToMsgId: number | undefined =
         isText && content.text?.replyTo != null ? Number(content.text.replyTo) : undefined;
 
+      // Capture edit metadata.
+      const editedMsgId: number | undefined = isEdit
+        ? Number((content as { edit?: { messageId?: number } }).edit?.messageId)
+        : undefined;
+
       const message: KeybaseInboundMessage = {
         messageId: String(msg.id),
         target,
@@ -243,6 +251,8 @@ export async function monitorKeybaseProvider(
         rawChannel,
         attachments,
         replyToMsgId: replyToMsgId && !isNaN(replyToMsgId) ? replyToMsgId : undefined,
+        isEdit: isEdit || undefined,
+        editedMsgId: editedMsgId && !isNaN(editedMsgId) ? editedMsgId : undefined,
       };
 
       core.channel.activity.record({
