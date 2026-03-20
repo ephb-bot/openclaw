@@ -12,6 +12,7 @@ import {
   type RuntimeEnv,
 } from "openclaw/plugin-sdk";
 import { getLiveBot } from "./bot-client.js";
+import { handleKeybaseCommand, isKeybaseCommand } from "./commands.js";
 import { markdownToKeybase } from "./format.js";
 import { fetchKeybaseHistory } from "./history.js";
 import { normalizeKeybaseAllowEntry } from "./normalize.js";
@@ -544,7 +545,7 @@ export async function handleKeybaseInbound(params: {
   const doneEmoji: string | false =
     teamConfig?.doneReaction !== undefined
       ? teamConfig.doneReaction
-      : (account.config.doneReaction ?? false);
+      : (account.config.doneReaction ?? "✅");
   const errorEmoji: string | false =
     teamConfig?.errorReaction !== undefined
       ? teamConfig.errorReaction
@@ -552,6 +553,43 @@ export async function handleKeybaseInbound(params: {
 
   const liveBot = getLiveBot(account.accountId);
   const msgId = Number(message.messageId);
+
+  // Intercept Keybase-specific config commands before agent dispatch.
+  if (isKeybaseCommand(rawBody)) {
+    const result = handleKeybaseCommand(rawBody, account.accountId);
+    if (result.handled) {
+      if (result.configPatch) {
+        try {
+          const port = process.env["OPENCLAW_GATEWAY_PORT"];
+          const token = process.env["OPENCLAW_GATEWAY_TOKEN"];
+          if (!port || !token) throw new Error("Gateway env vars not available");
+          const resp = await fetch(`http://127.0.0.1:${port}/api`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ method: "config.patch", params: { raw: result.configPatch } }),
+          });
+          if (!resp.ok) throw new Error(`Gateway returned ${resp.status}`);
+        } catch (err) {
+          await deliverKeybaseReply({
+            payload: {
+              text: `⚠️ Config update failed — setting may not persist after restart.\n\n${result.reply}\n\nError: ${err instanceof Error ? err.message : String(err)}`,
+            },
+            target: peerId,
+            accountId: account.accountId,
+            markdownFormatting: account.config.markdownFormatting,
+          });
+          return;
+        }
+      }
+      await deliverKeybaseReply({
+        payload: { text: result.reply },
+        target: peerId,
+        accountId: account.accountId,
+        markdownFormatting: account.config.markdownFormatting,
+      });
+      return;
+    }
+  }
 
   // Send ack reaction immediately after all policy gates pass.
   if (liveBot && ackEmoji && msgId) {
