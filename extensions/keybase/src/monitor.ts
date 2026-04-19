@@ -1,0 +1,397 @@
+import { randomUUID } from "node:crypto";
+import { copyFile, mkdir, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import type { RuntimeEnv } from "openclaw/plugin-sdk";
+import { resolveKeybaseAccount } from "./accounts.js";
+import {
+  clearLiveBot,
+  deinitKeybaseBot,
+  getAllLiveBots,
+  initKeybaseBot,
+  setLiveBot,
+} from "./bot-client.js";
+import { advertiseKeybaseCommands } from "./commands.js";
+import { deleteBraindump, handleKeybaseInbound } from "./inbound.js";
+import { isKeybaseTeamTarget } from "./normalize.js";
+import { getKeybaseRuntime } from "./runtime.js";
+import type { CoreConfig, KeybaseAttachment, KeybaseInboundMessage } from "./types.js";
+
+export type KeybaseMonitorOptions = {
+  accountId?: string;
+  config?: CoreConfig;
+  runtime?: RuntimeEnv;
+  abortSignal?: AbortSignal;
+  statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
+};
+
+function buildInboundTarget(params: {
+  channel: { name: string; membersType?: string; topicName?: string };
+  senderUsername: string;
+}): { target: string; isGroup: boolean; isTeamChannel: boolean } {
+  const { channel, senderUsername } = params;
+  const membersType = channel.membersType ?? "";
+  // Team channels.
+  if (membersType === "team" || membersType === "impteam") {
+    const topic = channel.topicName ? `#${channel.topicName}` : "#general";
+    return { target: `team:${channel.name}${topic}`, isGroup: true, isTeamChannel: true };
+  }
+  // impteamnative group chats: channel.name is comma-separated participants.
+  if (membersType === "impteamnative" && channel.name.includes(",")) {
+    const participants = channel.name.split(",").map((s) => s.trim());
+    if (participants.length > 2) {
+      // Multi-person group chat — use the full channel name as target, not a team channel.
+      return { target: channel.name, isGroup: true, isTeamChannel: false };
+    }
+  }
+  // 1:1 DM — reply to sender directly.
+  return { target: senderUsername, isGroup: false, isTeamChannel: false };
+}
+
+export async function monitorKeybaseProvider(
+  opts: KeybaseMonitorOptions,
+): Promise<{ stop: () => void }> {
+  const core = getKeybaseRuntime();
+  const cfg = opts.config ?? (core.config.loadConfig() as CoreConfig);
+  const account = resolveKeybaseAccount({ cfg, accountId: opts.accountId });
+
+  if (!account.configured) {
+    throw new Error(
+      `Keybase is not configured for account "${account.accountId}" (need username and paperkey in channels.keybase).`,
+    );
+  }
+
+  const logger = core.logging.getChildLogger({
+    channel: "keybase",
+    accountId: account.accountId,
+  });
+
+  const runtime: RuntimeEnv = opts.runtime ?? {
+    log: (...args: unknown[]) => logger.info(args.map(String).join(" ")),
+    error: (...args: unknown[]) => logger.error(args.map(String).join(" ")),
+    exit: () => {
+      throw new Error("Runtime exit not available");
+    },
+  };
+
+  logger.info(`[${account.accountId}] initializing Keybase bot as ${account.username}`);
+
+  const bot = await initKeybaseBot(account);
+  setLiveBot(account.accountId, bot);
+
+  logger.info(`[${account.accountId}] Keybase bot ready, listening for messages`);
+
+  // Advertise slash commands so Keybase shows autocomplete.
+  advertiseKeybaseCommands(bot).catch((err) => {
+    logger.warn(
+      `[${account.accountId}] Failed to advertise commands: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+
+  // abortSignal integration: resolve a promise when aborted so we can race it.
+  let resolveAbort: () => void = () => {};
+  const abortPromise = new Promise<void>((resolve) => {
+    resolveAbort = resolve;
+  });
+
+  if (opts.abortSignal) {
+    if (opts.abortSignal.aborted) {
+      resolveAbort();
+    } else {
+      opts.abortSignal.addEventListener("abort", resolveAbort, { once: true });
+    }
+  }
+
+  let stopped = false;
+
+  /** Default max attachment size in bytes (20 MB). */
+  const mediaMaxBytes = (account.config.mediaMaxMb ?? 20) * 1024 * 1024;
+
+  // watchAllChannelsForNewMessages returns a Promise that resolves when the
+  // internal listen process exits. We race it against the abort signal.
+  const listenPromise = bot.chat.watchAllChannelsForNewMessages(
+    async (msg) => {
+      if (stopped) {
+        return;
+      }
+
+      const content = msg.content;
+      if (!content) {
+        return;
+      }
+
+      const isText = content.type === "text" && Boolean(content.text?.body?.trim());
+      const isAttachment = content.type === "attachment";
+      const isDelete = content.type === "delete";
+      const isEdit = content.type === "edit" && Boolean(content.edit?.body?.trim());
+
+      // Handle delete events for the braindump channel.
+      if (isDelete) {
+        const channelName = msg.channel.name ?? "";
+        const topicName = msg.channel.topicName ?? "";
+        const isBraindumpChannel = channelName === "coexistence" && topicName === "braindump";
+        if (isBraindumpChannel) {
+          const messageIDs: number[] =
+            (content as { delete?: { messageIDs?: number[] } }).delete?.messageIDs ?? [];
+          for (const id of messageIDs) {
+            await deleteBraindump(id, (m) => logger.info(m));
+          }
+        }
+        return;
+      }
+
+      // Skip messages that are neither text, attachment, nor edit.
+      if (!isText && !isAttachment && !isEdit) {
+        return;
+      }
+
+      const rawChannel = {
+        name: msg.channel.name,
+        membersType: msg.channel.membersType,
+        topicName: msg.channel.topicName,
+      };
+
+      const senderUsername = msg.sender?.username ?? "";
+      if (!senderUsername) {
+        return;
+      }
+
+      const { target, isGroup, isTeamChannel } = buildInboundTarget({
+        channel: rawChannel,
+        senderUsername,
+      });
+
+      // Resolve message text (attachment title serves as caption; edits use the new body).
+      const text = isText
+        ? (content.text?.body?.trim() ?? "")
+        : isEdit
+          ? (content.edit?.body?.trim() ?? "")
+          : (content.attachment?.object?.title?.trim() ?? "");
+
+      // Download attachments to a temp directory.
+      let attachments: KeybaseAttachment[] | undefined;
+      let tempDir: string | undefined;
+
+      if (isAttachment && content.attachment) {
+        const asset = content.attachment.object;
+        const mimeType = asset?.mimeType ?? "application/octet-stream";
+        // Derive a safe filename from the asset; voice messages often have no filename.
+        const ext =
+          mimeType === "video/mp4"
+            ? ".mp4"
+            : mimeType === "image/jpeg"
+              ? ".jpg"
+              : mimeType === "image/png"
+                ? ".png"
+                : mimeType === "audio/ogg"
+                  ? ".ogg"
+                  : ".bin";
+        const rawFilename = asset?.filename?.trim() ?? "";
+        const filename = rawFilename && rawFilename !== "." ? rawFilename : `attachment${ext}`;
+        const fileSize = asset?.size ?? 0;
+
+        const isSupportedMime =
+          mimeType.startsWith("image/") ||
+          mimeType.startsWith("audio/") ||
+          mimeType.startsWith("video/"); // Keybase sends audio recordings as video/mp4
+
+        // Only process supported attachments within size limit.
+        if (isSupportedMime && fileSize <= mediaMaxBytes) {
+          try {
+            const { chmod } = await import("node:fs/promises");
+            // Step 1: download into /tmp (world-writable, vrtxbot can write here).
+            const tmpDownloadDir = join(tmpdir(), `keybase-dl-${randomUUID()}`);
+            await mkdir(tmpDownloadDir, { recursive: true });
+            await chmod(tmpDownloadDir, 0o777);
+            const tmpPath = join(tmpDownloadDir, filename);
+            await bot.chat.download(rawChannel, msg.id, tmpPath);
+
+            // Step 2: copy into the OpenClaw media dir (root-owned, agent sandbox allows it).
+            const mediaDir = join(homedir(), ".openclaw", "media", "keybase", randomUUID());
+            await mkdir(mediaDir, { recursive: true });
+            const finalPath = join(mediaDir, filename);
+            await copyFile(tmpPath, finalPath);
+
+            // Clean up tmp download.
+            rm(tmpDownloadDir, { recursive: true, force: true }).catch(() => {});
+
+            tempDir = mediaDir;
+            attachments = [{ localPath: finalPath, mimeType, filename }];
+          } catch (err) {
+            logger.error(
+              `[${account.accountId}] attachment download failed (msg ${msg.id}): ${err instanceof Error ? err.message : String(err)}`,
+            );
+            // Clean up on failure only.
+            if (tempDir) {
+              rm(tempDir, { recursive: true, force: true }).catch(() => {});
+              tempDir = undefined;
+            }
+          }
+        } else if (!isSupportedMime) {
+          runtime.log?.(
+            `keybase: skipping unsupported attachment (${mimeType}) from ${senderUsername}`,
+          );
+          return;
+        } else {
+          runtime.log?.(
+            `keybase: skipping oversized attachment (${fileSize} bytes) from ${senderUsername}`,
+          );
+          return;
+        }
+      }
+
+      // Skip if nothing to process.
+      if (!text && (!attachments || attachments.length === 0)) {
+        return;
+      }
+
+      // Capture reply-to message ID if this is a reply.
+      const replyToMsgId: number | undefined =
+        isText && content.text?.replyTo != null ? Number(content.text.replyTo) : undefined;
+
+      // Capture edit metadata.
+      const editedMsgId: number | undefined = isEdit
+        ? Number((content as { edit?: { messageId?: number } }).edit?.messageId)
+        : undefined;
+
+      const message: KeybaseInboundMessage = {
+        messageId: String(msg.id),
+        target,
+        senderUsername,
+        text,
+        timestamp: msg.sentAt ? msg.sentAt * 1000 : Date.now(),
+        isGroup,
+        isTeamChannel,
+        rawChannel,
+        attachments,
+        replyToMsgId: replyToMsgId && !isNaN(replyToMsgId) ? replyToMsgId : undefined,
+        isEdit: isEdit || undefined,
+        editedMsgId: editedMsgId && !isNaN(editedMsgId) ? editedMsgId : undefined,
+      };
+
+      core.channel.activity.record({
+        channel: "keybase",
+        accountId: account.accountId,
+        direction: "inbound",
+        at: message.timestamp,
+      });
+
+      opts.statusSink?.({ lastInboundAt: message.timestamp });
+
+      try {
+        await handleKeybaseInbound({ message, account, config: cfg, runtime });
+      } catch (err) {
+        logger.error(
+          `[${account.accountId}] inbound handler error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      // Note: attachment temp dirs are intentionally NOT cleaned up here — the
+      // agent run is async and may still be accessing the file. The OS will
+      // reclaim /tmp on reboot. A future improvement could schedule deferred cleanup.
+    },
+    (err) => {
+      if (!stopped) {
+        logger.error(`[${account.accountId}] Keybase listen error: ${err.message}`);
+      }
+    },
+  );
+
+  // Race: either the listen process exits or we get an abort signal.
+  await Promise.race([listenPromise, abortPromise]);
+  stopped = true;
+
+  // Cleanup.
+  try {
+    clearLiveBot(account.accountId);
+    await deinitKeybaseBot(bot, account.accountId);
+    logger.info(`[${account.accountId}] Keybase bot stopped`);
+  } catch (err) {
+    logger.error(
+      `[${account.accountId}] cleanup error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return {
+    stop: () => {
+      // Signal abort so that the race resolves if it has not already.
+      stopped = true;
+      resolveAbort();
+    },
+  };
+}
+
+/**
+ * Global registry of active monitor stop functions.
+ * Filled by channel.ts when each provider starts.
+ * Cleared on gateway_stop to force all providers to stop.
+ */
+const activeMonitors = new Map<string, () => void>();
+
+/** Register a monitor's stop function (called by channel.ts). */
+export function registerKeybaseMonitor(accountId: string, stopFn: () => void): void {
+  activeMonitors.set(accountId, stopFn);
+}
+
+/** Unregister a monitor (called after it stops). */
+export function unregisterKeybaseMonitor(accountId: string): void {
+  activeMonitors.delete(accountId);
+}
+
+/** Stop all active Keybase providers. Called on gateway_stop. */
+export async function stopAllKeybaseProviders(): Promise<void> {
+  const logger = getKeybaseRuntime()?.logging?.getChildLogger?.({ channel: "keybase" }) ?? {
+    info: (...args: unknown[]) => console.log("[keybase]", ...args),
+    error: (...args: unknown[]) => console.error("[keybase]", ...args),
+  };
+
+  logger.info(`Stopping all Keybase providers (${activeMonitors.size} active)...`);
+
+  // Call all stop functions concurrently
+  const stopPromises = Array.from(activeMonitors.entries()).map(async ([accountId, stopFn]) => {
+    try {
+      logger.info(`Stopping Keybase provider: ${accountId}`);
+      stopFn();
+      activeMonitors.delete(accountId);
+    } catch (err) {
+      logger.error(`Error stopping Keybase provider ${accountId}:`, err);
+    }
+  });
+
+  await Promise.all(stopPromises);
+
+  // Force kill any orphaned Keybase child processes after deinit completes.
+  // The keybase-bot library may not properly clean up all spawned processes
+  // on deinit, especially if the process is in a broken state.
+  const { exec } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execAsync = promisify(exec);
+
+  try {
+    // Find orphaned keybase processes running under jetibot/vrtxbot users
+    const { stdout } = await execAsync(
+      'pgrep -f "keybase.*api-listen|keybase.*service" | xargs -r ps -o pid,ppid,user,cmd --no-headers | grep -E "jetibot|vrtxbot" | awk \'{print $1}\'',
+      { timeout: 10000 },
+    );
+    const orphanedPids = stdout.trim().split("\n").filter(Boolean);
+    if (orphanedPids.length > 0) {
+      logger.info(
+        `Killing ${orphanedPids.length} orphaned Keybase processes: ${orphanedPids.join(", ")}`,
+      );
+      for (const pid of orphanedPids) {
+        try {
+          process.kill(Number(pid), "SIGKILL");
+        } catch (e) {
+          // Process may already be dead
+        }
+      }
+    }
+  } catch (e) {
+    // pgrep may return non-zero if no processes found - that's fine
+    logger.debug(`Orphaned process check: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  logger.info("All Keybase providers stopped");
+}
+
+// Re-export for tree-shaking friendliness.
+export { isKeybaseTeamTarget };
