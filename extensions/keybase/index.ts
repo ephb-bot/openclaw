@@ -1,23 +1,26 @@
-import type { ChannelPlugin, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
-import { keybasePlugin } from "./src/channel.js";
+import { defineBundledChannelEntry } from "openclaw/plugin-sdk/channel-entry-contract";
 import { stopAllKeybaseProviders } from "./src/monitor.js";
-import { setKeybaseRuntime } from "./src/runtime.js";
 
-const plugin = {
+export default defineBundledChannelEntry({
   id: "keybase",
   name: "Keybase",
   description: "Keybase channel plugin",
-  configSchema: emptyPluginConfigSchema(),
-  register(api: OpenClawPluginApi) {
-    setKeybaseRuntime(api.runtime);
-    api.registerChannel({ plugin: keybasePlugin as ChannelPlugin });
-
-    // Register gateway_stop hook to clean up Keybase bot processes on shutdown
-    api.hooks.gateway_stop(() => {
-      return stopAllKeybaseProviders();
-    });
+  importMetaUrl: import.meta.url,
+  plugin: {
+    specifier: "./api.js",
+    exportName: "keybasePlugin",
   },
-};
-
-export default plugin;
+  runtime: {
+    specifier: "./runtime-api.js",
+    exportName: "setKeybaseRuntime",
+  },
+  registerFull(api) {
+    api.registerHook(
+      "gateway_stop",
+      async () => {
+        await stopAllKeybaseProviders();
+      },
+      { name: "keybase-gateway-stop", description: "Stop all Keybase providers on gateway shutdown" },
+    );
+  },
+});
